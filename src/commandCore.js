@@ -1,3 +1,6 @@
+//DO NOT USE IN NO-OP MODE!!
+
+/*
 class CommandCore {
   constructor(xyz, toxyz, bot) {
     this.xyz = bot.entity.position;//
@@ -41,3 +44,4 @@ function indexToCoords(i, start={x:0, y:0, z:0}, end={x: 0, y: 0, z:0}) {
 }
 
 module.exports = CommandCore;
+*/

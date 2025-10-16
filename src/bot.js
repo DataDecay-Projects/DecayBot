@@ -1,5 +1,6 @@
+//No-OP branch
+
 const mineflayer = require('mineflayer');
-const CommandCore = require('./commandCore.js');
 const HashUtilsLib = require('./hashUtils.js');
 const WebServer = require('./webServer.js');
 const CommandParser = require('./commandParser.js');
@@ -11,15 +12,14 @@ class Bot {
     constructor() {
         this.bot = null;
         this.HashUtils = new HashUtilsLib();
-        this.reconnectDelay = 5000;
+        this.reconnectDelay = 10000;
         this.flagPath = path.join(__dirname, 'flag.json');
-        this.teleportCoordinates = config.get("connection.core");
     }
 
     generateRandomizedName() {
         const baseName = config.get("connection.botName");
         return baseName.replace(/#/g, () => {
-            const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+            const chars = 'abcdef0123456789';
             return chars.charAt(Math.floor(Math.random() * chars.length));
         });
     }
@@ -30,15 +30,21 @@ class Bot {
     }
 
     createBotInstance() {
-        // Always use the configured name, with any '#' characters replaced with random alphanumeric characters
         const botName = this.generateRandomizedName();
         console.log(`Using bot name: ${botName}`);
-        
+
         this.bot = mineflayer.createBot({
             host: config.get("connection.serverName"),
+            port: config.get("connection.port"),
             username: botName,
             auth: 'offline',
-            version: ''
+            version: '',
+
+            // BungeeCord forwarding data
+            // If BungeeCord uses IP/UUID forwarding, enable it like so
+            fakeHost: config.get("connection.bungeeHost") || config.get("connection.serverName"),
+            skipValidation: true,
+            hideErrors: false
         });
 
         this.client = this.bot._client;
@@ -47,34 +53,9 @@ class Bot {
             this.bot.chatAddPattern(/db:(\S+) ?(.+)?/, "command", "Command Sent");
             const io = new WebServer(config.get("webServer.port"), this.bot, this.HashUtils);
             io.start();
-            this.bot.creative.startFlying();
-            
-            // Use coordinates from config for teleport
-            try {
-                this.client.chat(`/tp ${botName} ${this.teleportCoordinates.x} ${this.teleportCoordinates.y} ${this.teleportCoordinates.z}`);
-            } catch {
-                this.client = this.bot._client;
-                this.client.chat(`/tp ${botName} ${this.teleportCoordinates.x} ${this.teleportCoordinates.y} ${this.teleportCoordinates.z}`);
-            }
-            this.client.chat(`/vanish ${botName} true`);
-            this.client.chat(`/gamemode creative`);
-            // Use same coordinates for core setup
-            const coreStartPos = { 
-                x: this.teleportCoordinates.x, 
-                y: this.teleportCoordinates.y - 1, // Core is 1 block below spawn
-                z: this.teleportCoordinates.z 
-            };
-            const coreEndPos = { 
-                x: this.teleportCoordinates.x + 10, 
-                y: this.teleportCoordinates.y - 3, // Core extends down
-                z: this.teleportCoordinates.z + 10 
-            };
-            
-            this.bot.core = new CommandCore(coreStartPos, coreEndPos, this.bot);
+            this.bot.chat(`/register ${botName}`);
+
             this.commandParser = new CommandParser(this.bot, this.HashUtils);
-            setTimeout(() => {
-                this.bot.core.refillCore(coreStartPos, coreEndPos, this.bot);
-            }, 1000);
 
             this.bot.on('command', async (command, argsraw) => {
                 console.log(command + ", " + argsraw);
@@ -84,26 +65,44 @@ class Bot {
                     await this.commandParser.handleCommand(command, argsraw ? argsraw.split(" ") : []);
                 }
             });
-
-            // Use stored coordinates on death
-            this.bot.on('death', () => {
-                this.client.chat(`/tp ${botName} ${this.teleportCoordinates.x} ${this.teleportCoordinates.y} ${this.teleportCoordinates.z}`);
-                this.client.chat("/gamemode creative");
-                this.client.chat(`/vanish ${botName} true`);
-            });
         });
 
-        this.bot.on('error', (errrrr) => {
-            console.log(errrrr);
+        this.bot.on('error', (err) => {
+            console.log(err);
             this.updateFlag('restart', true);
             this.reconnect();
         });
 
-        this.bot.on('end', () => {
-            console.log('Bot disconnected');
-            this.updateFlag('restart', true);
-            this.reconnect();
-        });
+        this.bot.on('end', (reason) => {
+    console.log(`[Disconnect] ${reason}`);
+
+    // If BungeeCord triggers a server switch, ignore reconnect
+    const serverSwitchMessages = [
+        "server closed",
+        "connected to a fallback server",
+        "sending you to",
+        "kicked whilst connecting to"
+    ];
+
+    if (reason && serverSwitchMessages.some(msg => reason.toLowerCase().includes(msg))) {
+        console.log("Detected BungeeCord server switch — skipping reconnect.");
+        return; // do NOT reconnect
+    }
+    this.updateFlag('restart', true);
+    this.reconnect();
+});
+
+this.bot.on('kick', (reason) => {
+    console.log(`[Kick] ${reason}`);
+
+    if (reason && reason.toLowerCase().includes("server closed")) {
+        console.log("BungeeCord switch kick detected — ignoring reconnect.");
+        return;
+    }
+
+    this.reconnect();
+});
+
     }
 
     reconnect() {
@@ -119,11 +118,11 @@ class Bot {
                 console.error('Error reading flag.json:', err);
                 return;
             }
-            
+
             let flags;
             try {
                 flags = JSON.parse(data);
-            } catch (e) {
+            } catch {
                 return;
             }
             flags[key] = value;
@@ -136,22 +135,20 @@ class Bot {
 
     setupAutoRestart() {
         const fiveHoursInMs = 5 * 60 * 60 * 1000;
-    
         if (this.autoRestartInterval) return;
-    
+
         this.autoRestartInterval = setInterval(() => {
             const currentTime = new Date();
-    
             fs.readFile(this.flagPath, 'utf8', (err, data) => {
                 if (err) return;
-    
+
                 let flags;
                 try {
                     flags = JSON.parse(data);
-                } catch (e) {
+                } catch {
                     return;
                 }
-    
+
                 if (flags.last) {
                     const last = new Date(flags.last);
                     if (currentTime - last >= fiveHoursInMs) {
@@ -162,10 +159,9 @@ class Bot {
         }, 60 * 1000);
     }
 
-
     say(text, colour = "white") {
-        if (this.bot && this.bot.core) {
-            this.bot.core.run(`tellraw @a [{"text":"${text}","color":"${colour}"}]`);
+        if (this.bot) {
+            this.bot.chat(text);
         }
     }
 }
