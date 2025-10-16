@@ -39,12 +39,6 @@ class Bot {
             username: botName,
             auth: 'offline',
             version: '',
-
-            // BungeeCord forwarding data
-            // If BungeeCord uses IP/UUID forwarding, enable it like so
-            fakeHost: config.get("connection.bungeeHost") || config.get("connection.serverName"),
-            skipValidation: true,
-            hideErrors: false
         });
 
         this.client = this.bot._client;
