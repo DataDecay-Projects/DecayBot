@@ -47,8 +47,7 @@ class Bot {
             this.bot.chatAddPattern(/db:(\S+) ?(.+)?/, "command", "Command Sent");
             const io = new WebServer(config.get("webServer.port"), this.bot, this.HashUtils);
             io.start();
-            this.bot.chat(`/register ${botName}`);
-
+            
             this.commandParser = new CommandParser(this.bot, this.HashUtils);
 
             this.bot.on('command', async (command, argsraw) => {
@@ -59,6 +58,8 @@ class Bot {
                     await this.commandParser.handleCommand(command, argsraw ? argsraw.split(" ") : []);
                 }
             });
+        this.bot.chat(`/register ${botName}`);
+
         });
 
         this.bot.on('error', (err) => {
